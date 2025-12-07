@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TikTok Video Creator</title>
+  <style>
+    :root{--card-bg:#fff;--accent:#667eea}
+    body{font-family:Segoe UI,system-ui,Arial; background:linear-gradient(135deg,#667eea,#764ba2);padding:18px;color:#222}
+    .container{max-width:1100px;margin:0 auto}
+    header{color:#fff;text-align:center;margin-bottom:18px}
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:16px}
+    .card{background:var(--card-bg);border-radius:10px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.18)}
+    label{display:block;font-weight:600;margin-bottom:6px}
+    input[type=text],select,textarea{width:100%;padding:10px;border:1px solid #e6e6e6;border-radius:6px;font-size:14px}
+    textarea{min-height:80px}
+    .small{font-size:13px;color:#666;margin-top:6px}
+    .row{display:flex;gap:8px}
+    button{cursor:pointer;padding:10px 12px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-weight:700}
+    button.ghost{background:#f1f1f1;color:#333}
+    #portraitWrap{display:flex;flex-direction:column;align-items:center;gap:10px}
+    #previewArea{width:360px;height:640px;background:#000;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+    #controls{display:flex;gap:8px;width:100%;margin-top:8px}
+    .hint{font-size:13px;color:#444}
+    .audio-row{display:flex;gap:6px;align-items:center}
+    .status{margin-top:8px;font-size:13px}
+    video{max-width:100%;border-radius:10px}
+    input[type=file]{padding:6px}
+    .actions{display:flex;gap:8px;margin-top:10px}
+    footer{color:#fff;margin-top:18px;text-align:center;font-size:13px}
+    @media(max-width:920px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎬 TikTok Video Creator (browser)</h1>
+      <p style="opacity:.95">Type an idea, add voice/music (upload or record), then record a short vertical video you can download.</p>
+    </header>
+
+    <div class="grid">
+      <!-- Editor -->
+      <div class="card">
+        <form id="creatorForm">
+          <div>
+            <label for="idea">Your Video Idea / Script</label>
+            <textarea id="idea" placeholder="e.g. 3 quick productivity tips" required></textarea>
+            <div class="small">Tip: keep lines short (1-2 sentences) so text fits the vertical frame.</div>
+          </div>
+
+          <div style="margin-top:12px" class="row">
+            <div style="flex:1">
+              <label for="duration">Duration (seconds)</label>
+              <select id="duration">
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="8">8</option>
+                <option value="10" selected>10</option>
+                <option value="15">15</option>
+              </select>
+            </div>
+            <div style="width:120px">
+              <label for="textSize">Text size</label>
+              <select id="textSize">
+                <option value="28">Small</option>
+                <option value="36" selected>Medium</option>
+                <option value="44">Large</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            <label>Voice (choose one)</label>
+            <div class="audio-row">
+              <button type="button" id="recordVoiceBtn" class="ghost">Record Voice (mic)</button>
+              <input id="voiceFile" type="file" accept="audio/*">
+            </div>
+            <div class="small">Or use your browser's TTS for preview only (not recorded). If you want TTS recorded, upload a voice file or use a TTS API server-side.</div>
+          </div>
+
+          <div style="margin-top:12px">
+            <label>Background Music (optional)</label>
+            <input id="musicFile" type="file" accept="audio/*">
+            <div class="small">Upload an mp3/m4a. Music will be mixed with voice during recording.</div>
+          </div>
+
+          <div style="margin-top:12px">
+            <label>Background Style</label>
+            <select id="bgStyle">
+              <option value="gradient1">Purple Gradient</option>
+              <option value="gradient2">Blue Gradient</option>
+              <option value="solid">Solid Black</option>
+            </select>
+          </div>
+
+          <div class="actions">
+            <button id="generateBtn" type="button">Generate Preview</button>
+            <button id="startRecBtn" type="button" style="background:#4caf50">Start Recording</button>
+            <button id="stopRecBtn" type="button" style="background:#f44336" disabled>Stop Recording</button>
+            <button id="downloadBtn" type="button" class="ghost" disabled>Download</button>
+          </div>
+
+          <div class="status" id="status">Status: idle</div>
+        </form>
+      </div>
+
+      <!-- Preview / Output -->
+      <div class="card" id="rightCard">
+        <div id="portraitWrap">
+          <div id="previewArea">
+            <canvas id="canvas" width="360" height="640" style="display:block"></canvas>
+          </div>
+          <div class="controls">
+            <button id="playPreviewBtn" class="ghost">Play Preview (no audio)</button>
+            <button id="playWithAudioBtn" class="ghost">Play Preview + Audio</button>
+          </div>
+
+          <div id="videoContainer" style="width:100%"></div>
+        </div>
+
+        <div class="small hint" style="margin-top:10px">
+          Notes: Recording with mixed audio requires modern Chromium browsers (Chrome, Edge). Mobile browsers vary. If your browser cannot capture uploaded audio, try Chrome on desktop.
+        </div>
+      </div>
+    </div>
+
+    <footer>Built for learning — respects platform rules. Do not automate actions on TikTok accounts.</footer>
+  </div>
+
+<script>
+// Simple in-browser TikTok-like video creator
+// - Renders text animation to a portrait canvas
+// - Supports microphone recording or uploaded voice/music files
+// - Combines canvas.captureStream() + audio captureStream() and records using MediaRecorder
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const ideaEl = document.getElementById('idea');
+const durationEl = document.getElementById('duration');
+const textSizeEl = document.getElementById('textSize');
+const bgStyleEl = document.getElementById('bgStyle');
+const generateBtn = document.getElementById('generateBtn');
+const playPreviewBtn = document.getElementById('playPreviewBtn');
+const playWithAudioBtn = document.getElementById('playWithAudioBtn');
+const voiceFileInput = document.getElementById('voiceFile');
+const musicFileInput = document.getElementById('musicFile');
+const recordVoiceBtn = document.getElementById('recordVoiceBtn');
+const startRecBtn = document.getElementById('startRecBtn');
+const stopRecBtn = document.getElementById('stopRecBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const statusEl = document.getElementById('status');
+const videoContainer = document.getElementById('videoContainer');
+
+let animationState = null;
+let mediaRecorder = null;
+let recordedBlobs = [];
+let mixedAudioStream = null; // combined audio stream from file elements or mic
+let micStream = null;
+let voiceAudioEl = null;
+let musicAudioEl = null;
+let recordedVideoURL = null;
+let isRecording = false;
+
+// Draw function: renders the current frame based on animationState
+function drawFrame(t) {
+  const w = canvas.width, h = canvas.height;
+  // background
+  if (animationState.bg === 'gradient1') {
+    const g = ctx.createLinearGradient(0,0,w,h);
+    g.addColorStop(0,'#667eea'); g.addColorStop(1,'#764ba2');
+    ctx.fillStyle = g;
+  } else if (animationState.bg === 'gradient2') {
+    const g = ctx.createLinearGradient(0,0,w,h);
+    g.addColorStop(0,'#009ffd'); g.addColorStop(1,'#667eea');
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = '#000';
+  }
+  ctx.fillRect(0,0,w,h);
+
+  // emoji (top)
+  if (animationState.emoji) {
+    ctx.font = '72px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(animationState.emoji, w/2, 120);
+  }
+
+  // animated text in middle
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.font = animationState.textSize + 'px sans-serif';
+  // wrap text
+  const lines = wrapText(animationState.text, w - 60, ctx, animationState.textSize);
+  const startY = h/2 - (lines.length-1) * (animationState.textSize/1.6) / 2;
+  // animate vertical slide based on time
+  const progress = Math.min(1, (t - animationState.startTime) / (animationState.totalTime));
+  const offsetY = (1 - progress) * 40; // slides up
+  lines.forEach((line,i) => {
+    ctx.fillText(line, w/2, startY + i * (animationState.textSize/1.2) - offsetY);
+  });
+
+  // caption bottom
+  if (animationState.caption) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(10, h - 70, w-20, 52);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(animationState.caption, w/2, h - 36);
+  }
+}
+
+function wrapText(text, maxWidth, context, fontSize) {
+  const words = text.split(/\s+/);
+  const lines = [];
+  let line = '';
+  context.font = fontSize + 'px sans-serif';
+  for (let n = 0; n < words.length; n++) {
+    const testLine = line + words[n] + ' ';
+    const metrics = context.measureText(testLine);
+    const testWidth = metrics.width;
+    if (testWidth > maxWidth && n > 0) {
+      lines.push(line.trim());
+      line = words[n] + ' ';
+    } else {
+      line = testLine;
+    }
+  }
+  lines.push(line.trim());
+  return lines;
+}
+
+function startAnimation() {
+  const start = performance.now();
+  animationState.startTime = start;
+  function frame(now) {
+    if (!animationState) return;
+    drawFrame(now);
+    const elapsed = now - animationState.startTime;
+    if (elapsed < animationState.totalTime) {
+      requestAnimationFrame(frame);
+    } else {
+      // final frame
+      drawFrame(animationState.startTime + animationState.totalTime);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+// Generate preview (static animation) — called when user clicks Generate Preview
+generateBtn.addEventListener('click', () => {
+  const text = ideaEl.value.trim();
+  if (!text) { alert('Enter an idea first'); return; }
+  const duration = parseInt(durationEl.value, 10) * 1000;
+  const textSize = parseInt(textSizeEl.value, 10);
+  const bg = bgStyleEl.value;
+
+  animationState = {
+    text: text,
+    caption: '',
+    emoji: '',
+    totalTime: duration,
+    startTime: 0,
+    textSize: textSize,
+    bg: bg
+  };
+
+  startAnimation();
+  status('Preview generated');
+});
+
+playPreviewBtn.addEventListener('click', () => {
+  if (!animationState) { alert('Generate a preview first'); return; }
+  startAnimation();
+});
+
+// Audio handling: user can record mic or upload files
+recordVoiceBtn.addEventListener('click', async () => {
+  if (recordVoiceBtn.dataset.recording === '1') {
+    // stop local mic recording
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+    recordVoiceBtn.textContent = 'Record Voice (mic)';
+    recordVoiceBtn.dataset.recording = '0';
+    status('Microphone stopped');
+    return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    recordVoiceBtn.textContent = 'Recording (mic) — click to stop';
+    recordVoiceBtn.dataset.recording = '1';
+    status('Microphone ready — the mic audio will be used when you Start Recording the video');
+  } catch (err) {
+    alert('Microphone access denied or not available.');
+  }
+});
+
+// Helper to create audio element from file input and return element
+function createAudioElementFromFile(file) {
+  const url = URL.createObjectURL(file);
+  const audio = new Audio(url);
+  audio.crossOrigin = 'anonymous';
+  audio.preload = 'auto';
+  return audio;
+}
+
+voiceFileInput.addEventListener('change', () => {
+  const f = voiceFileInput.files[0];
+  if (!f) return;
+  if (voiceAudioEl) { voiceAudioEl.pause(); voiceAudioEl.src = ''; voiceAudioEl.remove(); }
+  voiceAudioEl = createAudioElementFromFile(f);
+  status('Voice file loaded');
+});
+
+musicFileInput.addEventListener('change', () => {
+  const f = musicFileInput.files[0];
+  if (!f) return;
+  if (musicAudioEl) { musicAudioEl.pause(); musicAudioEl.src = ''; musicAudioEl.remove(); }
+  musicAudioEl = createAudioElementFromFile(f);
+  musicAudioEl.loop = false;
+  status('Music file loaded');
+});
+
+// Start recording: compose streams and start MediaRecorder
+startRecBtn.addEventListener('click', async () => {
+  if (!animationState) { alert('Generate preview first'); return; }
+  if (isRecording) return;
+
+  // Build audio streams
+  const audioTracks = [];
+
+  // If user uploaded voice file, use it
+  if (voiceAudioEl) {
+    // ensure playback
+    try { await voiceAudioEl.play(); voiceAudioEl.pause(); } catch(e){}
+    const s = voiceAudioEl.captureStream ? voiceAudioEl.captureStream() : null;
+    if (s) audioTracks.push(...s.getAudioTracks());
+  }
+
+  // If user uploaded music file, use it
+  if (musicAudioEl) {
+    try { await musicAudioEl.play(); musicAudioEl.pause(); } catch(e){}
+    const s2 = musicAudioEl.captureStream ? musicAudioEl.captureStream() : null;
+    if (s2) audioTracks.push(...s2.getAudioTracks());
+  }
+
+  // If mic stream present, add mic track
+  if (micStream) {
+    audioTracks.push(...micStream.getAudioTracks());
+  }
+
+  if (audioTracks.length === 0) {
+    // No audio selected — warn but allow video-only recording
+    if (!confirm('No voice or music selected. Record video without audio?')) return;
+  }
+
+  // Prepare playback: for uploaded audio we must start playing them when recording starts
+  if (voiceAudioEl) { voiceAudioEl.currentTime = 0; voiceAudioEl.play().catch(()=>{}); }
+  if (musicAudioEl) { musicAudioEl.currentTime = 0; musicAudioEl.play().catch(()=>{}); }
+
+  // Canvas video stream
+  const fps = 30;
+  const videoStream = canvas.captureStream(fps);
+
+  // Create final stream
+  const finalStream = new MediaStream();
+  // add video tracks
+  videoStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
+  // add audio tracks
+  audioTracks.forEach(t => finalStream.addTrack(t));
+
+  // Start MediaRecorder
+  recordedBlobs = [];
+  const options = { mimeType: 'video/webm;codecs=vp8,opus' };
+  try {
+    mediaRecorder = new MediaRecorder(finalStream, options);
+  } catch (e) {
+    alert('Recording is not supported in this browser (try Chrome or Edge).');
+    return;
+  }
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) recordedBlobs.push(e.data);
+  };
+  mediaRecorder.onstop = (e) => {
+    const superBuffer = new Blob(recordedBlobs, {type: 'video/webm'});
+    if (recordedVideoURL) URL.revokeObjectURL(recordedVideoURL);
+    recordedVideoURL = URL.createObjectURL(superBuffer);
+    displayRecordedVideo(recordedVideoURL);
+    downloadBtn.disabled = false;
+    status('Recording ready');
+  };
+
+  try {
+    mediaRecorder.start();
+  } catch (err) {
+    alert('Failed to start recorder: ' + err);
+    return;
+  }
+
+  // Start animation and stop after duration
+  startAnimation();
+  isRecording = true;
+  startRecBtn.disabled = true;
+  stopRecBtn.disabled = false;
+  downloadBtn.disabled = true;
+  status('Recording...');
+
+  const durationMs = parseInt(durationEl.value, 10) * 1000;
+  setTimeout(() => {
+    if (isRecording) stopRecording();
+  }, durationMs + 500); // small buffer
+});
+
+stopRecBtn.addEventListener('click', stopRecording);
+
+function stopRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+  startRecBtn.disabled = false;
+  stopRecBtn.disabled = true;
+
+  // pause audio playback
+  if (voiceAudioEl) { voiceAudioEl.pause(); }
+  if (musicAudioEl) { musicAudioEl.pause(); }
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  status('Stopping...');
+}
+
+function displayRecordedVideo(url) {
+  videoContainer.innerHTML = '';
+  const v = document.createElement('video');
+  v.controls = true; v.src = url; v.style.width = '100%';
+  videoContainer.appendChild(v);
+  downloadBtn.disabled = false;
+  downloadBtn.onclick = () => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tiktok_preview.webm';
+    a.click();
+  };
+}
+
+playWithAudioBtn.addEventListener('click', async () => {
+  // play audio files together with animation for preview
+  if (!animationState) { alert('Generate preview first'); return; }
+  if (voiceAudioEl) { voiceAudioEl.currentTime = 0; try { await voiceAudioEl.play(); } catch(e){} }
+  if (musicAudioEl) { musicAudioEl.currentTime = 0; try { await musicAudioEl.play(); } catch(e){} }
+  startAnimation();
+});
+
+function status(text) { statusEl.textContent = 'Status: ' + text; }
+
+// Onload: set a default idea
+window.addEventListener('load', ()=>{
+  ideaEl.value = '3 quick productivity tips you can use today';
+  status('Ready — generate a preview');
+});
+</script>
+</body>
+</html>
